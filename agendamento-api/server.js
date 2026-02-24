@@ -1,13 +1,13 @@
 require("dotenv").config();
 const express = require("express");
 const { Pool } = require("pg");
-const bcrypt = require('bcrypt');
+const bcrypt = require("bcrypt");
 
 const app = express();
 app.use(express.json());
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: process.env.DATABASE_URL,
 });
 
 app.get("/teste-banco", async (req, res) => {
@@ -25,40 +25,86 @@ app.get("/teste-banco", async (req, res) => {
   }
 });
 
-app.post('/users', async (req,res) =>{
-  try{
-    const {name,email,password,role} = req.body;
+app.post("/appointments", async (req, res) => {
+  try {
+    const { patient_id, provider_id, appointment_date } = req.body;
 
-    if(!name || !email || !password || !role){
-      return res.status(400).json({erro: 'todos os campos são obrigatórios'});
+    if (!patient_id || !provider_id || !appointment_date) {
+      return res
+        .status(400)
+        .json({ erro: "IDs do paciente, médico e a data são obrigatórios." });
     }
-  
-  const salt = await bcrypt.genSalt(10);
-  const passwordHash = await bcrypt.hash(password,salt);
+    const checkQuery = `
+     SELECT * FROM appointments
+     WHERE provider_id = $1
+     AND appointment_date = $2
+     AND status != 'CANCELED';`;
+    const checkResult = await pool.query(checkQuery, [
+      provider_id,
+      appointment_date,
+    ]);
+    if (checkResult.rows.length > 0) {
+      return res
+        .status(409)
+        .json({
+          erro: "Horário indisponível. O médico já possui uma consulta neste horário.",
+        });
+    }
+    const insertQuery = `
+     INSERT INTO appointments (patient_id, provider_id, appointment_date)
+     VALUES ($1,$2,$3)
+     RETURNING *;`;
+    const result = await pool.query(insertQuery, [
+      patient_id,
+      provider_id,
+      appointment_date,
+    ]);
+    res.status(201).json({
+      mensagem: "Consulta agendada com sucesso!",
+      agendamento: result.rows[0],
+    });
+  } catch (erro) {
+    console.error("Erro ao agendar consulta:", erro);
+    res
+      .status(500)
+      .json({ erro: "Erro interno no servidor ao agendar consulta." });
+  }
+});
 
-  const query = `
+app.post("/users", async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body;
+
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({ erro: "todos os campos são obrigatórios" });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const query = `
    INSERT INTO users (name, email, password_hash, role)
    VALUES ($1, $2, $3, $4)
    RETURNING id, name, email, role, created_at;
   `;
 
-  const values = [name, email, passwordHash, role];
-  const result = await pool.query(query, values);
+    const values = [name, email, passwordHash, role];
+    const result = await pool.query(query, values);
 
-  res.status(201).json({
-    mensagem: 'Usuário criado com sucesso!',
-    usuario: result.rows[0]
-  })
-}catch(erro){
-  console.error('erro ao criar usuário', erro);
-  if (erro.code === '23505'){
-    return res.status(409).json({erro: 'Este e-mail já está em uso'});
-  }
-  res.status(500).json ({ erro: 'Erro interno no servidor ao criar usuário'})
+    res.status(201).json({
+      mensagem: "Usuário criado com sucesso!",
+      usuario: result.rows[0],
+    });
+  } catch (erro) {
+    console.error("erro ao criar usuário", erro);
+    if (erro.code === "23505") {
+      return res.status(409).json({ erro: "Este e-mail já está em uso" });
+    }
+    res.status(500).json({ erro: "Erro interno no servidor ao criar usuário" });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`servidor rodando na porta ${PORT}`)
-})
+  console.log(`servidor rodando na porta ${PORT}`);
+});
